@@ -1,0 +1,7 @@
+roles/
+collections/
+.vagrant/
+*_key
+private_key
+*kubeconfig*
+admin.conf

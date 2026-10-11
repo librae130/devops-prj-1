@@ -1,0 +1,6 @@
+---
+kubernetes_allow_pods_on_control_plane: false
+kubernetes_apiserver_advertise_address: "192.168.56.10"
+kubernetes_flannel_manifest_file: /root/kube-flannel-vagrant.yml
+kubernetes_kubelet_extra_args: '--node-ip={{ ansible_host }}'
+helm_version: 'v3.16.4'

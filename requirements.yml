@@ -1,0 +1,10 @@
+---
+roles:
+  - name: geerlingguy.containerd
+  - name: geerlingguy.kubernetes
+  - name: geerlingguy.helm
+
+collections:
+  - name: kubernetes.core
+  - name: community.general
+  - name: ansible.posix

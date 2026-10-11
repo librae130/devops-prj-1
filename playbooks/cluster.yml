@@ -1,0 +1,107 @@
+---
+- name: Build the cluster
+  hosts: k8s
+  become: yes
+
+  vars_files:
+    - ../vars/main.yml
+
+  pre_tasks:
+    - name: Turn swap off now
+      ansible.builtin.command: swapoff -a
+      when: ansible_facts['swaptotal_mb'] | int > 0
+
+    - name: Remove swap from fstab
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^([^#].*\sswap\s.*)$'
+        replace: '# \1'
+
+    - name: Load kernel modules on boot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: |
+          overlay
+          br_netfilter
+        mode: "0644"
+
+    - name: Load kernel modules now
+      community.general.modprobe:
+        name: "{{ item }}"
+        state: present
+      loop: [overlay, br_netfilter]
+
+    - name: Enable IP forwarding and bridge filtering
+      ansible.posix.sysctl:
+        name: "{{ item }}"
+        value: "1"
+        sysctl_file: /etc/sysctl.d/k8s.conf
+        reload: yes
+      loop:
+        - net.ipv4.ip_forward
+        - net.bridge.bridge-nf-call-iptables
+
+    - name: Download Flannel manifest
+      ansible.builtin.get_url:
+        url: https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+        dest: "/root/kube-flannel-vagrant.yml"
+        mode: "0644"
+
+    - name: Make Flannel use the private network card (enp0s8)
+      ansible.builtin.replace:
+        path: /root/kube-flannel-vagrant.yml
+        regexp: '^(\s*)- --kube-subnet-mgr\n(?!\s*- --iface=)'
+        replace: '\1- --kube-subnet-mgr\n\1- --iface=enp0s8\n'
+
+  roles:
+    - role: geerlingguy.containerd
+      tags: ['containerd']
+    - role: geerlingguy.kubernetes
+      tags: ['kubernetes']
+
+- name: Helm and tools on the control plane
+  hosts: k8s-master
+  become: yes
+  vars_files:
+    - ../vars/main.yml
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+  roles:
+    - role: geerlingguy.helm
+      tags: ['helm']
+  tasks:
+    - name: kubeconfig folder for vagrant user
+      ansible.builtin.file:
+        path: /home/vagrant/.kube
+        state: directory
+        owner: vagrant
+        group: vagrant
+        mode: "0755"
+
+    - name: kubeconfig for vagrant user
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /home/vagrant/.kube/config
+        remote_src: yes
+        owner: vagrant
+        group: vagrant
+        mode: "0600"
+
+    - name: Python packages that kubernetes.core needs
+      ansible.builtin.apt:
+        name: [python3-pip, python3-yaml]
+        state: present
+        update_cache: yes
+
+    - name: Python kubernetes library
+      ansible.builtin.pip:
+        name: kubernetes
+
+    - name: Wait for nodes to be Ready
+      ansible.builtin.command: kubectl wait --for=condition=Ready nodes --all --timeout=300s
+      changed_when: false
+
+    - name: Wait for system pods to be Ready
+      ansible.builtin.command: kubectl wait --for=condition=Ready pods --all -n {{ item }} --timeout=300s
+      changed_when: false
+      loop: [kube-system, kube-flannel]
