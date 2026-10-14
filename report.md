@@ -390,7 +390,7 @@ To extend the microservice deployment without polluting the root repository or b
 1. Upstream charts were cloned at pinned commit `8ed96c8d98625c73b67c7172b6703383ea9e46e9`.
 2. Stored cleanly in `charts/microservice` and `charts/redis`.
 3. Chart version was explicitly bumped from `0.1.0` to **`0.1.0-ext.1`** in `Chart.yaml` to denote custom extensions.
-4. Documented in [`charts/VENDORED.md`](file:///c:/Users/HIEU/Desktop/Project1/devops-prj-1/charts/VENDORED.md).
+4. Documented in [`charts/VENDORED.md`](charts/VENDORED.md).
 5. Added templates:
    - `templates/ingress.yaml`: Configurable Ingress resource.
    - `templates/pdb.yaml`: PodDisruptionBudget template.
