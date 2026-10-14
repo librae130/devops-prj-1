@@ -22,11 +22,11 @@ for f in "$VALUES_DIR"/*.yaml; do
     [ -e "$f" ] || continue
     fname=$(basename "$f")
 
-    # Check 1: Detect duplicate keys (using Python yaml duplicate check)
-    python3 - <<EOF
+    if ! python3 - <<EOF
 import sys, re
 
 filename = "$f"
+fname = "$fname"
 keys_seen = set()
 duplicates = []
 
@@ -44,7 +44,7 @@ if duplicates:
         print(f"ERROR: [{fname}:{lno}] Duplicate top-level YAML key detected: '{k}'", file=sys.stderr)
     sys.exit(1)
 EOF
-    if [ $? -ne 0 ]; then
+    then
         ERRORS_FOUND=$((ERRORS_FOUND + 1))
     else
         echo "✓ $fname passed duplicate key linting"
