@@ -6,8 +6,12 @@
 
 # Automated Kubernetes Cluster Provisioning and Microservices Deployment using Ansible and Helm
 
-**Student Name:** Đặng Trung Hiếu  
-**Student ID:** 21127040  
+### Group Information
+| No. | Full Name | Student ID | Role / Contribution |
+| :---: | :--- | :---: | :--- |
+| 1 | **Kiều Duy Hiếu** | **23127365** | Infrastructure Automation, Playbooks, Ansible & Helm Orchestration |
+| 2 | **Đỗ Hiếu Quang** | **23127537** | Network Experiments, Bug Diagnosis, Ingress & Verification |
+
 **Course:** Advanced DevOps (CS433)  
 **Academic Year:** 2026–2027  
 **Date:** October 14, 2026  
@@ -641,4 +645,4 @@ ansible-playbook -i inventory.ini playbooks/drain.yml
 ```
 
 ---
-*Report compiled autonomously by Google DeepMind Antigravity AI Pair Programmer.*
+*Report prepared by Kiều Duy Hiếu (23127365) & Đỗ Hiếu Quang (23127537) — CS433 Advanced DevOps.*
