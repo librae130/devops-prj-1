@@ -56,7 +56,7 @@
             initialDelaySeconds: 2
             periodSeconds: 2
             failureThreshold: 2
-        wait: yes
+        wait: no
 
     # --------------------------------------------------------------------------
     # 3. Wait for Kubelet to detect failure and restart the container
@@ -67,7 +67,7 @@
         -l app=productcatalogservice
         -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}'
       register: current_restarts
-      until: current_restarts.stdout | int > initial_restarts | int
+      until: (current_restarts.stdout | default('0') | int) > 0
       retries: 30
       delay: 3
       changed_when: false
@@ -76,7 +76,7 @@
     # 4. Extract Kubelet eviction / restart events from kubectl describe
     # --------------------------------------------------------------------------
     - name: Capture Kubelet probe failure events
-      ansible.builtin.command: kubectl describe pod {{ pod_name }} -n {{ app_namespace }}
+      ansible.builtin.command: kubectl describe pod -l app=productcatalogservice -n {{ app_namespace }}
       register: pod_describe
       changed_when: false
 
