@@ -1,0 +1,127 @@
+---
+# ==============================================================================
+# Rubric Area 5: Pod Self-Healing via Liveness Probe Restart Demonstration
+# Reference: Rubric Item 5 (20 marks)
+#
+# Usage:
+#   ansible-playbook -i inventory.ini playbooks/probe-demo.yml
+# ==============================================================================
+- name: Demonstrate Pod Self-Healing via Liveness Probe
+  hosts: k8s-master
+  become: yes
+
+  vars_files:
+    - ../vars/microservices.yml
+
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 1. Capture baseline restart count for productcatalogservice
+    # --------------------------------------------------------------------------
+    - name: Get initial pod name and restart count
+      ansible.builtin.command: >-
+        kubectl get pod -n {{ app_namespace }}
+        -l app=productcatalogservice
+        -o jsonpath='{.items[0].metadata.name} {.items[0].status.containerStatuses[0].restartCount}'
+      register: initial_pod_info
+      changed_when: false
+
+    - name: Set facts for initial state
+      ansible.builtin.set_fact:
+        pod_name: "{{ initial_pod_info.stdout.split()[0] }}"
+        initial_restarts: "{{ initial_pod_info.stdout.split()[1] | int }}"
+
+    - name: Display initial state
+      ansible.builtin.debug:
+        msg: "Target Pod: {{ pod_name }} | Initial Restarts: {{ initial_restarts }}"
+
+    # --------------------------------------------------------------------------
+    # 2. Inject misconfigured liveness probe (simulate service hang / failure)
+    # --------------------------------------------------------------------------
+    - name: Apply failing liveness probe on productcatalogservice (port 9999)
+      kubernetes.core.helm:
+        name: productcatalogservice
+        chart_ref: "{{ charts_dest }}/microservice"
+        release_namespace: "{{ app_namespace }}"
+        values_files:
+          - "{{ src }}/values/productcatalog-service-values.yaml"
+        values:
+          appName: productcatalogservice
+          appReplicas: 1
+          livenessProbe:
+            grpc:
+              port: 9999
+            initialDelaySeconds: 2
+            periodSeconds: 2
+            failureThreshold: 2
+        wait: yes
+
+    # --------------------------------------------------------------------------
+    # 3. Wait for Kubelet to detect failure and restart the container
+    # --------------------------------------------------------------------------
+    - name: Wait for container restart triggered by failing liveness probe
+      ansible.builtin.command: >-
+        kubectl get pod -n {{ app_namespace }}
+        -l app=productcatalogservice
+        -o jsonpath='{.items[0].status.containerStatuses[0].restartCount}'
+      register: current_restarts
+      until: current_restarts.stdout | int > initial_restarts | int
+      retries: 30
+      delay: 3
+      changed_when: false
+
+    # --------------------------------------------------------------------------
+    # 4. Extract Kubelet eviction / restart events from kubectl describe
+    # --------------------------------------------------------------------------
+    - name: Capture Kubelet probe failure events
+      ansible.builtin.command: kubectl describe pod {{ pod_name }} -n {{ app_namespace }}
+      register: pod_describe
+      changed_when: false
+
+    - name: Display probe failure evidence
+      ansible.builtin.debug:
+        msg:
+          - "=== KUBELET SELF-HEALING EVENT EVIDENCE ==="
+          - "{{ pod_describe.stdout_lines | select('match', '.*Unhealthy.*Liveness probe failed.*') | list }}"
+
+    # --------------------------------------------------------------------------
+    # 5. Restore healthy probe configuration (port 3550)
+    # --------------------------------------------------------------------------
+    - name: Restore healthy liveness probe on productcatalogservice (port 3550)
+      kubernetes.core.helm:
+        name: productcatalogservice
+        chart_ref: "{{ charts_dest }}/microservice"
+        release_namespace: "{{ app_namespace }}"
+        values_files:
+          - "{{ src }}/values/productcatalog-service-values.yaml"
+        values: "{{ common | combine((microservices | selectattr('release', 'equalto', 'productcatalogservice') | list)[0].overrides) }}"
+        wait: yes
+
+    - name: Verify pod has recovered to Ready state
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ app_namespace }}"
+        label_selectors:
+          - app=productcatalogservice
+      register: restored_pod
+      until:
+        - restored_pod.resources is defined
+        - restored_pod.resources | length > 0
+        - restored_pod.resources[0].status.containerStatuses[0].ready == true
+      retries: 20
+      delay: 3
+
+    - name: Probe Self-Healing Summary
+      ansible.builtin.debug:
+        msg:
+          - "======================================================================"
+          - "LIVENESS PROBE SELF-HEALING DEMONSTRATION SUCCESSFUL (RUBRIC 5)"
+          - "======================================================================"
+          - "✓ Injected failing probe (port 9999)"
+          - "✓ Kubelet detected unhealthy container and triggered restart"
+          - "✓ Restart count increased from {{ initial_restarts }} to {{ current_restarts.stdout }}"
+          - "✓ Restored healthy probe (port 3550) and confirmed Ready state"
+          - "======================================================================"

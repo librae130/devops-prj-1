@@ -43,7 +43,7 @@
 
     - name: Download Flannel manifest
       ansible.builtin.get_url:
-        url: https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+        url: https://github.com/flannel-io/flannel/releases/download/v0.26.1/kube-flannel.yml
         dest: "/root/kube-flannel-vagrant.yml"
         mode: "0644"
 

@@ -1,7 +1,10 @@
 ---
 # ==============================================================================
 # Part 3: Deploy Google Online Boutique using Ansible & Helm
-# Reference: Section 7 of Project 1 Specification
+# Extended with:
+# - Rubric 4: Ingress Controller support (frontend on ClusterIP, routing on boutique.local)
+# - Rubric 5: Probes & Resource Limits using cleanly vendored extended charts
+# - Rubric 6: PodDisruptionBudget policies
 # ==============================================================================
 - name: Deploy Online Boutique Microservices Application
   hosts: k8s-master
@@ -20,7 +23,22 @@
         state: present
         update_cache: no
 
-    - name: Clone upstream Helm chart repository (pinned commit)
+    # --------------------------------------------------------------------------
+    # 1. Distribute vendored charts and clone upstream values
+    # --------------------------------------------------------------------------
+    - name: Ensure vendored charts directory exists on master
+      ansible.builtin.file:
+        path: "{{ charts_dest }}"
+        state: directory
+        mode: "0755"
+
+    - name: Copy vendored Helm charts to master
+      ansible.builtin.copy:
+        src: ../charts/
+        dest: "{{ charts_dest }}/"
+        mode: "0755"
+
+    - name: Clone upstream Helm chart repository (pinned commit for values files)
       ansible.builtin.git:
         repo: "{{ chart_repo }}"
         dest: "{{ src }}"
@@ -35,15 +53,19 @@
         state: present
 
     # --------------------------------------------------------------------------
-    # Deploy all 11 microservices using Helm and the 3 overrides:
-    # 1. appReplicas: 1 (applied across all releases via common)
-    # 2. serviceType: NodePort (frontend override)
-    # 3. appName: checkoutservice (checkoutservice upstream bug fix)
+    # 2. Deploy all 11 microservices using Helm and the layered overrides:
+    # - Upstream values files remain 100% UNCHANGED
+    # - Overrides layer on top:
+    #   * appReplicas: 1 (via common)
+    #   * frontend: serviceType: ClusterIP + Ingress boutique.local
+    #   * checkoutservice: appName: checkoutservice (upstream bug fix)
+    #   * probes and resource requests/limits on all services
+    #   * PDB on critical components
     # --------------------------------------------------------------------------
     - name: Deploy Online Boutique releases via Helm
       kubernetes.core.helm:
         name: "{{ item.release }}"
-        chart_ref: "{{ src }}/{{ item.chart }}"
+        chart_ref: "{{ charts_dest }}/{{ item.chart }}"
         release_namespace: "{{ app_namespace }}"
         create_namespace: false
         values_files:
@@ -73,6 +95,9 @@
       loop_control:
         label: "{{ item.expected_deployment }}"
 
+    # --------------------------------------------------------------------------
+    # 3. Assert frontend Service is ClusterIP and Ingress exists (Rubric 4)
+    # --------------------------------------------------------------------------
     - name: Retrieve frontend Service details
       kubernetes.core.k8s_info:
         api_version: v1
@@ -81,28 +106,44 @@
         namespace: "{{ app_namespace }}"
       register: frontend_service_info
 
-    - name: Assert frontend Service is created with NodePort
+    - name: Assert frontend Service is ClusterIP
       ansible.builtin.assert:
         that:
           - frontend_service_info.resources is defined
           - frontend_service_info.resources | length > 0
-          - frontend_service_info.resources[0].spec.type == "NodePort"
-          - frontend_service_info.resources[0].spec.ports[0].nodePort is defined
-        fail_msg: "Frontend service was not configured as NodePort!"
+          - frontend_service_info.resources[0].spec.type == "ClusterIP"
+        fail_msg: "Frontend service was expected to be ClusterIP!"
 
-    - name: Display storefront URL
+    - name: Retrieve frontend Ingress details
+      kubernetes.core.k8s_info:
+        api_version: networking.k8s.io/v1
+        kind: Ingress
+        name: frontend
+        namespace: "{{ app_namespace }}"
+      register: frontend_ingress_info
+
+    - name: Assert frontend Ingress is configured with boutique.local
+      ansible.builtin.assert:
+        that:
+          - frontend_ingress_info.resources is defined
+          - frontend_ingress_info.resources | length > 0
+          - frontend_ingress_info.resources[0].spec.rules[0].host == "boutique.local"
+        fail_msg: "Frontend Ingress is not configured with host boutique.local!"
+
+    - name: Display storefront Ingress access details
       ansible.builtin.debug:
         msg:
           - "======================================================================"
-          - "ONLINE BOUTIQUE DEPLOYMENT SUCCESSFUL"
+          - "ONLINE BOUTIQUE DEPLOYMENT SUCCESSFUL (INGRESS + PROBES + LIMITS + PDB)"
           - "======================================================================"
-          - "Namespace:           {{ app_namespace }}"
-          - "Total Releases:       {{ microservices | length }}"
-          - "Frontend NodePort:    {{ frontend_service_info.resources[0].spec.ports[0].nodePort }}"
+          - "Namespace:        {{ app_namespace }}"
+          - "Total Releases:    {{ microservices | length }}"
+          - "Frontend Service:  ClusterIP (exposing port 80 internally)"
+          - "Ingress Hostname:  boutique.local (Port: 30080)"
           - ""
-          - "Storefront Access URL (via worker node):"
-          - "  http://192.168.56.11:{{ frontend_service_info.resources[0].spec.ports[0].nodePort }}/"
+          - "Access URL (add '192.168.56.11 boutique.local' to C:\\Windows\\System32\\drivers\\etc\\hosts):"
+          - "  http://boutique.local:30080/"
           - ""
-          - "Storefront Access URL (via control plane):"
-          - "  http://192.168.56.10:{{ frontend_service_info.resources[0].spec.ports[0].nodePort }}/"
+          - "Direct HTTP access via curl with Host header:"
+          - "  curl -H 'Host: boutique.local' http://192.168.56.11:30080/"
           - "======================================================================"

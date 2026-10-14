@@ -1,120 +1,348 @@
 ---
 # ==============================================================================
 # Online Boutique Microservices Deployment Configuration
-# Reference: Section 7 of Project 1 Specification
+# Satisfies: Part 3, Rubric 4 (Ingress), Rubric 5 (Probes & Limits), Rubric 6 (PDB)
 # ==============================================================================
 
 # Target Kubernetes namespace
 app_namespace: microservice
 namespace: "{{ app_namespace }}"
 
-# Upstream Helm chart repository
+# Upstream Helm chart repository (used for upstream unmodified values files)
 chart_repo: "https://github.com/iankisali/microservice-deployment"
-
-# Pinned commit SHA for deterministic, idempotent deployments (Rubric Area 7)
 chart_version: "8ed96c8d98625c73b67c7172b6703383ea9e46e9"
-
-# Directory on the control plane where upstream charts are cloned
 src: "/opt/microservice-deployment"
 
+# Vendored and extended chart directory on master
+charts_dest: "/opt/boutique-charts"
+
 # ------------------------------------------------------------------------------
-# Override 1 (Applies to ALL releases):
-# Upstream values files request 2 replicas per service (>20 pods total).
-# A single 4GB RAM worker node cannot schedule that volume of pods.
-# Setting appReplicas: 1 keeps all 11 microservices running without OOM.
+# Override 1 (Applies to ALL releases via common):
+# Baseline replica count per service. Can be scaled via playbooks/scale.yml.
 # ------------------------------------------------------------------------------
 common:
   appReplicas: 1
 
 # ------------------------------------------------------------------------------
-# The 11 microservice releases
-# Deployed in dependency order: datastore & backends first, frontend last.
+# Microservices Releases (11 Components)
+# Deployed in dependency order: data store & backends first, frontend last.
+#
+# Extensions added:
+# - Rubric 4: Ingress configuration on frontend (host: boutique.local)
+# - Rubric 5: Realistic measured resource requests/limits and probes on all services
+# - Rubric 6: PodDisruptionBudget (PDB) on critical microservices
 # ------------------------------------------------------------------------------
 microservices:
+  # ----------------------------------------------------------------------------
   # 1. Redis Cart (shopping cart persistent cache)
-  # Uses generic chart/redis instead of chart/microservice
+  # ----------------------------------------------------------------------------
   - release: rediscart
-    chart: chart/redis
+    chart: redis
     values_file: values/redis-values.yaml
     expected_deployment: redis-cart
+    overrides:
+      resources:
+        requests:
+          cpu: "10m"
+          memory: "20Mi"
+        limits:
+          cpu: "50m"
+          memory: "64Mi"
+      readinessProbe:
+        tcpSocket:
+          port: 6379
+        initialDelaySeconds: 5
+        periodSeconds: 5
+      livenessProbe:
+        tcpSocket:
+          port: 6379
+        initialDelaySeconds: 10
+        periodSeconds: 10
 
+  # ----------------------------------------------------------------------------
   # 2. Email Service (order confirmation emails)
+  # Container listens on 8080 (Service publishes 5000)
+  # ----------------------------------------------------------------------------
   - release: emailservice
-    chart: chart/microservice
+    chart: microservice
     values_file: values/email-service-values.yaml
     expected_deployment: emailservice
+    overrides:
+      resources:
+        requests:
+          cpu: "10m"
+          memory: "40Mi"
+        limits:
+          cpu: "50m"
+          memory: "100Mi"
+      readinessProbe:
+        grpc:
+          port: 8080
+        initialDelaySeconds: 5
+        periodSeconds: 5
+      livenessProbe:
+        grpc:
+          port: 8080
+        initialDelaySeconds: 10
+        periodSeconds: 10
 
+  # ----------------------------------------------------------------------------
   # 3. Payment Service (credit card processing)
+  # ----------------------------------------------------------------------------
   - release: paymentservice
-    chart: chart/microservice
+    chart: microservice
     values_file: values/payment-service-values.yaml
     expected_deployment: paymentservice
+    overrides:
+      resources:
+        requests:
+          cpu: "10m"
+          memory: "40Mi"
+        limits:
+          cpu: "50m"
+          memory: "100Mi"
+      readinessProbe:
+        grpc:
+          port: 50051
+        initialDelaySeconds: 5
+        periodSeconds: 5
+      livenessProbe:
+        grpc:
+          port: 50051
+        initialDelaySeconds: 10
+        periodSeconds: 10
 
+  # ----------------------------------------------------------------------------
   # 4. Shipping Service (shipping cost calculation & tracking)
+  # ----------------------------------------------------------------------------
   - release: shippingservice
-    chart: chart/microservice
+    chart: microservice
     values_file: values/shipping-service-values.yaml
     expected_deployment: shippingservice
+    overrides:
+      resources:
+        requests:
+          cpu: "10m"
+          memory: "30Mi"
+        limits:
+          cpu: "50m"
+          memory: "80Mi"
+      readinessProbe:
+        grpc:
+          port: 50051
+        initialDelaySeconds: 5
+        periodSeconds: 5
+      livenessProbe:
+        grpc:
+          port: 50051
+        initialDelaySeconds: 10
+        periodSeconds: 10
 
+  # ----------------------------------------------------------------------------
   # 5. Currency Service (currency exchange rates & conversions)
+  # ----------------------------------------------------------------------------
   - release: currencyservice
-    chart: chart/microservice
+    chart: microservice
     values_file: values/currency-service-values.yaml
     expected_deployment: currencyservice
+    overrides:
+      resources:
+        requests:
+          cpu: "10m"
+          memory: "40Mi"
+        limits:
+          cpu: "50m"
+          memory: "100Mi"
+      readinessProbe:
+        grpc:
+          port: 7000
+        initialDelaySeconds: 5
+        periodSeconds: 5
+      livenessProbe:
+        grpc:
+          port: 7000
+        initialDelaySeconds: 10
+        periodSeconds: 10
 
+  # ----------------------------------------------------------------------------
   # 6. Product Catalog Service (product listing & search)
+  # ----------------------------------------------------------------------------
   - release: productcatalogservice
-    chart: chart/microservice
+    chart: microservice
     values_file: values/productcatalog-service-values.yaml
     expected_deployment: productcatalogservice
+    overrides:
+      resources:
+        requests:
+          cpu: "10m"
+          memory: "30Mi"
+        limits:
+          cpu: "50m"
+          memory: "80Mi"
+      readinessProbe:
+        grpc:
+          port: 3550
+        initialDelaySeconds: 5
+        periodSeconds: 5
+      livenessProbe:
+        grpc:
+          port: 3550
+        initialDelaySeconds: 10
+        periodSeconds: 10
+      pdb:
+        enabled: true
+        minAvailable: 1
 
+  # ----------------------------------------------------------------------------
   # 7. Cart Service (cart management via Redis)
+  # ----------------------------------------------------------------------------
   - release: cartservice
-    chart: chart/microservice
+    chart: microservice
     values_file: values/cart-service-values.yaml
     expected_deployment: cartservice
+    overrides:
+      resources:
+        requests:
+          cpu: "15m"
+          memory: "50Mi"
+        limits:
+          cpu: "100m"
+          memory: "150Mi"
+      readinessProbe:
+        grpc:
+          port: 7070
+        initialDelaySeconds: 5
+        periodSeconds: 5
+      livenessProbe:
+        grpc:
+          port: 7070
+        initialDelaySeconds: 10
+        periodSeconds: 10
+      pdb:
+        enabled: true
+        minAvailable: 1
 
+  # ----------------------------------------------------------------------------
   # 8. Recommendation Service (product recommendations)
+  # ----------------------------------------------------------------------------
   - release: recommendationservice
-    chart: chart/microservice
+    chart: microservice
     values_file: values/recommendation-service-values.yaml
     expected_deployment: recommendationservice
+    overrides:
+      resources:
+        requests:
+          cpu: "15m"
+          memory: "50Mi"
+        limits:
+          cpu: "100m"
+          memory: "150Mi"
+      readinessProbe:
+        grpc:
+          port: 8080
+        initialDelaySeconds: 5
+        periodSeconds: 5
+      livenessProbe:
+        grpc:
+          port: 8080
+        initialDelaySeconds: 10
+        periodSeconds: 10
 
-  # 9. Ad Service (contextual advertisement display)
+  # ----------------------------------------------------------------------------
+  # 9. Ad Service (contextual advertisement display, Java JVM)
+  # ----------------------------------------------------------------------------
   - release: adservice
-    chart: chart/microservice
+    chart: microservice
     values_file: values/ad-service-values.yaml
     expected_deployment: adservice
+    overrides:
+      resources:
+        requests:
+          cpu: "30m"
+          memory: "150Mi"
+        limits:
+          cpu: "200m"
+          memory: "300Mi"
+      readinessProbe:
+        grpc:
+          port: 9555
+        initialDelaySeconds: 15
+        periodSeconds: 10
+      livenessProbe:
+        grpc:
+          port: 9555
+        initialDelaySeconds: 20
+        periodSeconds: 10
 
-  # 10. Checkout Service
   # ----------------------------------------------------------------------------
-  # Override 3 (Upstream Bug Fix):
-  # In upstream values/checkout-service-values.yaml, lines 1-2 duplicate 'appImage':
-  #   appImage: checkoutservice
-  #   appImage: gcr.io/google-samples/microservices-demo/checkoutservice
-  # Because the key is duplicated, the second line overwrites and 'appName' is never set.
-  # The chart falls back to its default literal string "servicename".
-  # Frontend points to CHECKOUT_SERVICE_ADDR = checkoutservice:5050, which fails to resolve.
-  # By overriding appName: checkoutservice, the Deployment and Service get the right name.
+  # 10. Checkout Service
+  # Override appName: checkoutservice fixes upstream duplicate key bug.
   # ----------------------------------------------------------------------------
   - release: checkoutservice
-    chart: chart/microservice
+    chart: microservice
     values_file: values/checkout-service-values.yaml
     expected_deployment: checkoutservice
     overrides:
       appName: checkoutservice
+      resources:
+        requests:
+          cpu: "15m"
+          memory: "30Mi"
+        limits:
+          cpu: "100m"
+          memory: "100Mi"
+      readinessProbe:
+        grpc:
+          port: 5050
+        initialDelaySeconds: 5
+        periodSeconds: 5
+      livenessProbe:
+        grpc:
+          port: 5050
+        initialDelaySeconds: 10
+        periodSeconds: 10
+      pdb:
+        enabled: true
+        minAvailable: 1
 
-  # 11. Frontend Service
   # ----------------------------------------------------------------------------
-  # Override 2:
-  # Upstream requests serviceType: LoadBalancer.
-  # On bare-metal kubeadm (Vagrant), no cloud provider exists to assign an external IP.
-  # A LoadBalancer service would stay in <pending> forever and the storefront would be unreachable.
-  # Overriding serviceType: NodePort exposes the frontend on a high port (30000-32767).
+  # 11. Frontend Service
+  # Ingress routing (Rubric 4): serviceType returned to ClusterIP + Ingress rule.
   # ----------------------------------------------------------------------------
   - release: frontendservice
-    chart: chart/microservice
+    chart: microservice
     values_file: values/frontend-values.yaml
     expected_deployment: frontend
     overrides:
-      serviceType: NodePort
+      serviceType: ClusterIP
+      ingress:
+        enabled: true
+        host: boutique.local
+      resources:
+        requests:
+          cpu: "20m"
+          memory: "40Mi"
+        limits:
+          cpu: "100m"
+          memory: "120Mi"
+      readinessProbe:
+        httpGet:
+          path: /_healthz
+          port: 8080
+          httpHeaders:
+            - name: Cookie
+              value: "shop_session-id=x-readiness-probe"
+        initialDelaySeconds: 10
+        periodSeconds: 5
+      livenessProbe:
+        httpGet:
+          path: /_healthz
+          port: 8080
+          httpHeaders:
+            - name: Cookie
+              value: "shop_session-id=x-liveness-probe"
+        initialDelaySeconds: 15
+        periodSeconds: 10
+      pdb:
+        enabled: true
+        minAvailable: 1

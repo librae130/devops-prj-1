@@ -6,6 +6,7 @@ Vagrant.configure("2") do |config|
   boxes = [
     { name: "master",  ip: "192.168.56.10", mem: 2048 },
     { name: "node1",   ip: "192.168.56.11", mem: 4096 },
+    { name: "node2",   ip: "192.168.56.12", mem: 3072 },
     { name: "control", ip: "192.168.56.9",  mem: 1024 },
   ]
 

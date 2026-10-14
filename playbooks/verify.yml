@@ -1,18 +1,15 @@
 ---
 # ==============================================================================
-# Part 4: Automated Verification Playbook
-# Reference: Section 8 of Project 1 Specification
-#
-# Asserts rather than assumes:
-# 1. Both nodes are Ready and registered on private network (192.168.56.x)
-# 2. All 11 Deployments have their replicas available
-# 3. checkoutservice exists under the correct name (not "servicename")
-# 4. frontend Service is a NodePort
-# 5. HTTP requests to the storefront return 200 with recognisable content
+# Part 4: Comprehensive Automated Verification Playbook
+# Satisfies:
+# - Baseline Part 4: 5 strict health assertions
+# - Rubric 4: Ingress hostname routing (positive 200 & negative 404), frontend ClusterIP
+# - Rubric 5: Probes (liveness/readiness on >=4 services) and resource limits
+# - Rubric 6: PodDisruptionBudget (PDB) existence
 #
 # Any failure halts the play immediately.
 # ==============================================================================
-- name: Verify Online Boutique Microservices Deployment
+- name: Verify Online Boutique Deployment, Ingress, Probes, Limits, and PDB
   hosts: k8s-master
   become: yes
 
@@ -33,6 +30,12 @@
       - checkoutservice
       - frontend
 
+    expected_pdbs:
+      - frontend
+      - cartservice
+      - checkoutservice
+      - productcatalogservice
+
   environment:
     KUBECONFIG: /etc/kubernetes/admin.conf
 
@@ -40,13 +43,13 @@
     # --------------------------------------------------------------------------
     # Assertion 1: Cluster Nodes Status and Private Network Registration
     # --------------------------------------------------------------------------
-    - name: "[Check 1/5] Retrieve cluster node information"
+    - name: "[Check 1/7] Retrieve cluster node information"
       kubernetes.core.k8s_info:
         api_version: v1
         kind: Node
       register: cluster_nodes
 
-    - name: "[Check 1/5] Extract node status and InternalIPs"
+    - name: "[Check 1/7] Extract node status and InternalIPs"
       ansible.builtin.set_fact:
         node_ips: >-
           {{
@@ -67,25 +70,20 @@
             | list
           }}
 
-    - name: "[Check 1/5] Assert both nodes are Ready on private network 192.168.56.x"
+    - name: "[Check 1/7] Assert nodes are Ready on private network 192.168.56.x"
       ansible.builtin.assert:
         that:
-          - cluster_nodes.resources | length == 2
-          - all_nodes_ready | length == 2
+          - cluster_nodes.resources | length >= 2
           - all_nodes_ready | unique == ['True']
           - "'192.168.56.10' in node_ips"
           - "'192.168.56.11' in node_ips"
-        fail_msg: >-
-          Cluster nodes check failed! Verify that both nodes are Ready and their
-          InternalIPs are pinned to the private network (192.168.56.10 and 192.168.56.11).
-        success_msg: "Check 1 Passed: Both nodes are Ready on private network 192.168.56.x."
+        fail_msg: "Cluster nodes check failed! Ensure nodes are Ready on 192.168.56.x."
+        success_msg: "Check 1 Passed: Nodes are Ready on private network 192.168.56.x."
 
     # --------------------------------------------------------------------------
     # Assertion 2: All 11 Deployments Have Available Replicas
     # --------------------------------------------------------------------------
-    # Assertion 2: All 11 Deployments Have Available Replicas
-    # --------------------------------------------------------------------------
-    - name: "[Check 2/5] Retrieve and assert all 11 Deployments are Available"
+    - name: "[Check 2/7] Assert all 11 Deployments are Available"
       kubernetes.core.k8s_info:
         api_version: apps/v1
         kind: Deployment
@@ -101,7 +99,7 @@
     # --------------------------------------------------------------------------
     # Assertion 3: Bug Diagnosis Check (checkoutservice vs servicename)
     # --------------------------------------------------------------------------
-    - name: "[Check 3/5] Assert bug fix: 'servicename' Deployment MUST NOT exist"
+    - name: "[Check 3/7] Assert bug fix: 'servicename' Deployment MUST NOT exist"
       kubernetes.core.k8s_info:
         api_version: apps/v1
         kind: Deployment
@@ -110,7 +108,7 @@
       register: buggy_dep
       failed_when: buggy_dep.resources | length > 0
 
-    - name: "[Check 3/5] Verify checkoutservice Service endpoint exists on port 5050"
+    - name: "[Check 3/7] Verify checkoutservice Service endpoint exists on port 5050"
       kubernetes.core.k8s_info:
         api_version: v1
         kind: Service
@@ -118,19 +116,19 @@
         namespace: "{{ app_namespace }}"
       register: checkout_svc
 
-    - name: "[Check 3/5] Assert checkoutservice Service is present and exposing port 5050"
+    - name: "[Check 3/7] Assert checkoutservice Service is present and exposing port 5050"
       ansible.builtin.assert:
         that:
           - checkout_svc.resources is defined
           - checkout_svc.resources | length > 0
           - checkout_svc.resources[0].spec.ports[0].port == 5050
-        fail_msg: "Service checkoutservice does not exist or does not expose port 5050!"
-        success_msg: "Check 3 Passed: checkoutservice Service exists and exposes port 5050."
+        fail_msg: "checkoutservice Service does not exist or does not expose port 5050!"
+        success_msg: "Check 3 Passed: checkoutservice exists and exposes port 5050."
 
     # --------------------------------------------------------------------------
-    # Assertion 4: Frontend Service is a NodePort
+    # Assertion 4: Frontend Service is ClusterIP & Ingress Exists (Rubric 4)
     # --------------------------------------------------------------------------
-    - name: "[Check 4/5] Retrieve frontend Service details"
+    - name: "[Check 4/7] Retrieve frontend Service details"
       kubernetes.core.k8s_info:
         api_version: v1
         kind: Service
@@ -138,76 +136,131 @@
         namespace: "{{ app_namespace }}"
       register: frontend_svc
 
-    - name: "[Check 4/5] Assert frontend Service is NodePort with valid port"
+    - name: "[Check 4/7] Assert frontend Service is ClusterIP"
       ansible.builtin.assert:
         that:
           - frontend_svc.resources is defined
           - frontend_svc.resources | length > 0
-          - frontend_svc.resources[0].spec.type == "NodePort"
-          - frontend_svc.resources[0].spec.ports[0].nodePort is defined
-          - frontend_svc.resources[0].spec.ports[0].nodePort | int >= 30000
-          - frontend_svc.resources[0].spec.ports[0].nodePort | int <= 32767
-        fail_msg: "Frontend Service is not configured as NodePort! Check serviceType override."
-        success_msg: >-
-          Check 4 Passed: frontend Service is NodePort on port
-          {{ frontend_svc.resources[0].spec.ports[0].nodePort }}.
+          - frontend_svc.resources[0].spec.type == "ClusterIP"
+        fail_msg: "Frontend Service was expected to be ClusterIP!"
+        success_msg: "Check 4 Passed: frontend Service is ClusterIP."
 
-    - name: "[Check 4/5] Set fact for frontend NodePort"
-      ansible.builtin.set_fact:
-        frontend_nodeport: "{{ frontend_svc.resources[0].spec.ports[0].nodePort }}"
+    - name: "[Check 4/7] Retrieve frontend Ingress resource"
+      kubernetes.core.k8s_info:
+        api_version: networking.k8s.io/v1
+        kind: Ingress
+        name: frontend
+        namespace: "{{ app_namespace }}"
+      register: frontend_ing
+
+    - name: "[Check 4/7] Assert Ingress routes host boutique.local"
+      ansible.builtin.assert:
+        that:
+          - frontend_ing.resources is defined
+          - frontend_ing.resources | length > 0
+          - frontend_ing.resources[0].spec.rules[0].host == "boutique.local"
+        fail_msg: "Frontend Ingress rule for boutique.local is missing!"
+        success_msg: "Check 4 Passed: Ingress routes host boutique.local."
 
     # --------------------------------------------------------------------------
-    # Assertion 5: HTTP Storefront Returns HTTP 200 with Recognisable Content
+    # Assertion 5: Ingress HTTP Routing (Positive 200 & Negative 404) (Rubric 4)
     # --------------------------------------------------------------------------
-    - name: "[Check 5/5] HTTP GET storefront via worker node (node1: 192.168.56.11)"
+    - name: "[Check 5/7] Positive Check: HTTP GET boutique.local:30080 returns 200"
       ansible.builtin.uri:
-        url: "http://192.168.56.11:{{ frontend_nodeport }}/"
+        url: "http://192.168.56.11:30080/"
+        headers:
+          Host: "boutique.local"
         method: GET
         return_content: yes
         status_code: 200
         timeout: 15
-      register: storefront_worker_response
+      register: ingress_response
 
-    - name: "[Check 5/5] Assert worker storefront response contains recognisable content"
+    - name: "[Check 5/7] Assert storefront content is returned via Ingress"
       ansible.builtin.assert:
         that:
-          - storefront_worker_response.status == 200
-          - "'Online Boutique' in storefront_worker_response.content"
-        fail_msg: "Storefront on worker node returned unexpected status or content!"
-        success_msg: "Check 5 Passed: Storefront reachable via worker node (HTTP 200, 'Online Boutique' found)."
+          - ingress_response.status == 200
+          - "'Online Boutique' in ingress_response.content"
+        fail_msg: "Ingress positive check failed! Content did not contain 'Online Boutique'."
+        success_msg: "Check 5 Passed: Ingress routing for boutique.local returned HTTP 200."
 
-    - name: "[Check 5/5] HTTP GET storefront via control plane (master: 192.168.56.10)"
+    - name: "[Check 5/7] Negative Check: HTTP GET invalid host returns 404"
       ansible.builtin.uri:
-        url: "http://192.168.56.10:{{ frontend_nodeport }}/"
+        url: "http://192.168.56.11:30080/"
+        headers:
+          Host: "invalid.domain.local"
         method: GET
-        return_content: yes
-        status_code: 200
-        timeout: 15
-      register: storefront_master_response
+        status_code: 404
+        timeout: 10
+      register: negative_ingress_response
+      failed_when: negative_ingress_response.status != 404
 
-    - name: "[Check 5/5] Assert master storefront response contains recognisable content"
+    - name: "[Check 5/7] Assert negative routing test passed"
       ansible.builtin.assert:
         that:
-          - storefront_master_response.status == 200
-          - "'Online Boutique' in storefront_master_response.content"
-        fail_msg: "Storefront on master node returned unexpected status or content!"
-        success_msg: "Check 5 Passed: Storefront reachable via master node (HTTP 200, 'Online Boutique' found)."
+          - negative_ingress_response.status == 404
+        fail_msg: "Negative Ingress check failed! Expected 404 on unmapped host."
+        success_msg: "Check 5 Passed: Negative Ingress test returned HTTP 404 (proves hostname routing)."
+
+    # --------------------------------------------------------------------------
+    # Assertion 6: Probes & Resource Limits (Rubric 5)
+    # Assert >= 4 Deployments have livenessProbe, readinessProbe, and resources
+    # --------------------------------------------------------------------------
+    - name: "[Check 6/7] Inspect Deployments for probes and resource limits"
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ item }}"
+        namespace: "{{ app_namespace }}"
+      register: probe_check
+      loop:
+        - frontend
+        - checkoutservice
+        - productcatalogservice
+        - cartservice
+        - paymentservice
+
+    - name: "[Check 6/7] Assert all inspected services have probes and limits"
+      ansible.builtin.assert:
+        that:
+          - item.resources[0].spec.template.spec.containers[0].livenessProbe is defined
+          - item.resources[0].spec.template.spec.containers[0].readinessProbe is defined
+          - item.resources[0].spec.template.spec.containers[0].resources.requests is defined
+          - item.resources[0].spec.template.spec.containers[0].resources.limits is defined
+        fail_msg: "Deployment {{ item.item }} is missing probes or resource limits!"
+      loop: "{{ probe_check.results }}"
+      loop_control:
+        label: "{{ item.item }}"
+
+    # --------------------------------------------------------------------------
+    # Assertion 7: PodDisruptionBudget (PDB) (Rubric 6)
+    # --------------------------------------------------------------------------
+    - name: "[Check 7/7] Verify PodDisruptionBudgets exist"
+      kubernetes.core.k8s_info:
+        api_version: policy/v1
+        kind: PodDisruptionBudget
+        name: "{{ item }}"
+        namespace: "{{ app_namespace }}"
+      register: pdb_check
+      failed_when: pdb_check.resources | length == 0
+      loop: "{{ expected_pdbs }}"
 
     # --------------------------------------------------------------------------
     # Final Summary Banner
     # --------------------------------------------------------------------------
-    - name: Verification Summary
+    - name: Complete Verification Summary
       ansible.builtin.debug:
         msg:
           - "======================================================================"
-          - "ALL VERIFICATION CHECKS PASSED SUCCESSFULLY (5/5)"
+          - "ALL VERIFICATION CHECKS PASSED (7/7)"
           - "======================================================================"
-          - "✓ Check 1: Nodes (master, node1) are Ready on private network (192.168.56.x)"
-          - "✓ Check 2: All 11 Deployments are Available (replicas == 1)"
-          - "✓ Check 3: checkoutservice is correctly named (upstream bug fixed)"
-          - "✓ Check 4: frontend is exposed via NodePort ({{ frontend_nodeport }})"
-          - "✓ Check 5: Storefront returns HTTP 200 with 'Online Boutique' content"
+          - "✓ Check 1: Nodes are Ready on private network (192.168.56.x)"
+          - "✓ Check 2: All 11 Deployments are Available"
+          - "✓ Check 3: checkoutservice is correctly named (no 'servicename')"
+          - "✓ Check 4: frontend is ClusterIP and Ingress exists"
+          - "✓ Check 5: Ingress routing passed (Positive HTTP 200, Negative HTTP 404)"
+          - "✓ Check 6: Liveness/Readiness probes and resource limits verified (Rubric 5)"
+          - "✓ Check 7: PodDisruptionBudgets (PDB) verified on 4 core services (Rubric 6)"
           - ""
-          - "You can now test the storefront in your browser:"
-          - "  http://192.168.56.11:{{ frontend_nodeport }}/"
+          - "Storefront URL: http://boutique.local:30080/"
           - "======================================================================"

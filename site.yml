@@ -1,14 +1,18 @@
 ---
 # ==============================================================================
-# Master Site Playbook: Build Cluster and Deploy Online Boutique
+# Master Site Playbook: Build Cluster, Add-ons, and Deploy Online Boutique
 # Reference: Appendix C of Project 1 Specification
 #
 # Runs the full automation pipeline from zero to a working Online Boutique store:
-#   1. Builds 2-node K8s cluster (kubeadm, CNI enp0s8, Helm) -> playbooks/cluster.yml
-#   2. Deploys 11 Online Boutique microservices with Helm   -> playbooks/deploy.yml
+#   1. Builds Kubernetes cluster (kubeadm, CNI enp0s8, Helm) -> playbooks/cluster.yml
+#   2. Deploys Ingress Controller & Metrics Server          -> playbooks/addons.yml
+#   3. Deploys 11 Online Boutique microservices with Helm   -> playbooks/deploy.yml
 # ==============================================================================
 - name: Step 1 - Provision Kubernetes Cluster (Part 2)
   ansible.builtin.import_playbook: playbooks/cluster.yml
 
-- name: Step 2 - Deploy Online Boutique Microservices (Part 3)
+- name: Step 2 - Deploy Kubernetes Add-ons (Rubric 4 & 5)
+  ansible.builtin.import_playbook: playbooks/addons.yml
+
+- name: Step 3 - Deploy Online Boutique Microservices (Part 3)
   ansible.builtin.import_playbook: playbooks/deploy.yml

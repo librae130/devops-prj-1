@@ -1,0 +1,72 @@
+---
+# ==============================================================================
+# Rubric Area 2: Network Diagnosis - Experiment 2 (Kubelet Node IP Trap)
+# Reference: Section 6 and Rubric Item 2 (15 marks)
+#
+# Usage:
+#   Break:   ansible-playbook -i inventory.ini playbooks/experiments/net-trap2-nodeip.yml --tags break
+#   Restore: ansible-playbook -i inventory.ini playbooks/experiments/net-trap2-nodeip.yml --tags restore
+# ==============================================================================
+- name: Network Trap 2 - Kubelet Node IP Binding Experiment
+  hosts: node1
+  become: yes
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # Break Phase: Remove --node-ip from kubelet config on node1
+    # --------------------------------------------------------------------------
+    - name: "[BREAK] Remove --node-ip from kubelet extra args on node1"
+      ansible.builtin.replace:
+        path: /etc/default/kubelet
+        regexp: '--node-ip=\S+'
+        replace: ''
+      tags: [break]
+
+    - name: "[BREAK] Restart kubelet service on node1"
+      ansible.builtin.systemd:
+        name: kubelet
+        state: restarted
+      tags: [break]
+
+    - name: "[BREAK] Display diagnosis and symptoms"
+      ansible.builtin.debug:
+        msg:
+          - "======================================================================"
+          - "KUBELET NODE-IP MISCONFIGURED (DEFAULTED TO 10.0.2.15)"
+          - "======================================================================"
+          - "Symptom 1: node1 registers with InternalIP: 10.0.2.15 (NAT adapter)."
+          - "Symptom 2: 'kubectl logs <pod>' returns: 'connect: connection refused'."
+          - "Symptom 3: 'kubectl exec' returns: 'connect: connection refused'."
+          - "Root Cause: kube-apiserver tries to reach kubelet at 10.0.2.15:10250."
+          - "            Since 10.0.2.15 is master's own local NAT IP, it never reaches node1!"
+          - "Key Distinction from Trap 1: Pod-to-pod network traffic still works,"
+          - "            only control plane -> node streaming connections fail."
+          - "======================================================================"
+      tags: [break]
+
+    # --------------------------------------------------------------------------
+    # Restore Phase: Re-pin --node-ip to 192.168.56.11
+    # --------------------------------------------------------------------------
+    - name: "[RESTORE] Restore --node-ip in kubelet extra args on node1"
+      ansible.builtin.lineinfile:
+        path: /etc/default/kubelet
+        regexp: '^KUBELET_EXTRA_ARGS='
+        line: 'KUBELET_EXTRA_ARGS=--node-ip={{ ansible_host }}'
+      tags: [restore]
+
+    - name: "[RESTORE] Restart kubelet service on node1"
+      ansible.builtin.systemd:
+        name: kubelet
+        state: restarted
+      tags: [restore]
+
+    - name: "[RESTORE] Display recovery status"
+      ansible.builtin.debug:
+        msg:
+          - "======================================================================"
+          - "KUBELET NODE-IP RESTORED TO 192.168.56.11"
+          - "======================================================================"
+          - "✓ node1 registered InternalIP: 192.168.56.11."
+          - "✓ 'kubectl logs' and 'kubectl exec' functioning normally again."
+          - "======================================================================"
+      tags: [restore]

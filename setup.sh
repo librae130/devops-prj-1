@@ -16,7 +16,7 @@ ansible --version | head -1
 
 echo "== 2/4 Copying SSH keys for master and node1 =="
 mkdir -p ~/keys
-for h in master node1; do
+for h in master node1 node2; do
   src="/vagrant/.vagrant/machines/$h/virtualbox/private_key"
   if [ ! -f "$src" ]; then
     echo "ERROR: $src not found. Did 'vagrant up' finish for $h? Is /vagrant mounted?"

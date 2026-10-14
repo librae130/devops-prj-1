@@ -1,0 +1,92 @@
+---
+# ==============================================================================
+# Rubric Area 6: Scaling Microservices via Ansible (10 marks)
+#
+# Usage:
+#   ansible-playbook -i inventory.ini playbooks/scale.yml -e "release=frontendservice replicas=2"
+# ==============================================================================
+- name: Scale Microservice Application via Ansible
+  hosts: k8s-master
+  become: yes
+
+  vars_files:
+    - ../vars/microservices.yml
+
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 1. Input parameter validation
+    # --------------------------------------------------------------------------
+    - name: Validate required parameters
+      ansible.builtin.assert:
+        that:
+          - release is defined
+          - replicas is defined
+          - replicas | int >= 1
+        fail_msg: "Please provide valid parameters! Example: -e 'release=frontendservice replicas=2'"
+
+    # --------------------------------------------------------------------------
+    # 2. Safety Assertion: Never scale redis-cart (Appendix B - Data loss)
+    # --------------------------------------------------------------------------
+    - name: Prevent scaling redis-cart
+      ansible.builtin.assert:
+        that:
+          - release != "rediscart" or replicas | int == 1
+        fail_msg: >-
+          Scaling redis-cart to more than 1 replica is strictly forbidden!
+          Each redis replica uses its own local emptyDir volume, causing
+          shopping cart data loss across page reloads (Project Spec Appendix B).
+
+    # --------------------------------------------------------------------------
+    # 3. Locate target microservice configuration
+    # --------------------------------------------------------------------------
+    - name: Find microservice release entry
+      ansible.builtin.set_fact:
+        target_service: "{{ (microservices | selectattr('release', 'equalto', release) | list)[0] }}"
+
+    # --------------------------------------------------------------------------
+    # 4. Perform Helm upgrade with scaled replica count
+    # Helm remains the single source of truth (no unmanaged kubectl scale drift)
+    # --------------------------------------------------------------------------
+    - name: "Scale release '{{ release }}' to {{ replicas }} replicas via Helm"
+      kubernetes.core.helm:
+        name: "{{ target_service.release }}"
+        chart_ref: "{{ charts_dest }}/{{ target_service.chart }}"
+        release_namespace: "{{ app_namespace }}"
+        values_files:
+          - "{{ src }}/{{ target_service.values_file }}"
+        values: "{{ common | combine(target_service.overrides | default({})) | combine({'appReplicas': replicas | int}) }}"
+        wait: yes
+        wait_timeout: 180s
+
+    # --------------------------------------------------------------------------
+    # 5. Wait for target replicas to report available
+    # --------------------------------------------------------------------------
+    - name: Wait for scaled Deployment replicas to become Available
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ target_service.expected_deployment }}"
+        namespace: "{{ app_namespace }}"
+      register: scaled_dep
+      until:
+        - scaled_dep.resources is defined
+        - scaled_dep.resources | length > 0
+        - scaled_dep.resources[0].status.availableReplicas is defined
+        - scaled_dep.resources[0].status.availableReplicas == replicas | int
+      retries: 20
+      delay: 3
+
+    - name: Scaling Summary
+      ansible.builtin.debug:
+        msg:
+          - "======================================================================"
+          - "MICROSERVICE SCALED SUCCESSFULLY (RUBRIC 6)"
+          - "======================================================================"
+          - "Release:             {{ release }}"
+          - "Deployment:          {{ target_service.expected_deployment }}"
+          - "Requested Replicas:  {{ replicas }}"
+          - "Available Replicas:  {{ scaled_dep.resources[0].status.availableReplicas }}"
+          - "======================================================================"

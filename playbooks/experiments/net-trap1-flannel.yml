@@ -1,0 +1,75 @@
+---
+# ==============================================================================
+# Rubric Area 2: Network Diagnosis - Experiment 1 (Flannel Interface Trap)
+# Reference: Section 6 and Rubric Item 2 (15 marks)
+#
+# Usage:
+#   Break:   ansible-playbook -i inventory.ini playbooks/experiments/net-trap1-flannel.yml --tags break
+#   Restore: ansible-playbook -i inventory.ini playbooks/experiments/net-trap1-flannel.yml --tags restore
+# ==============================================================================
+- name: Network Trap 1 - Flannel Interface Binding Experiment
+  hosts: k8s-master
+  become: yes
+
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # Break Phase: Misconfigure Flannel to bind to enp0s3 (NAT adapter)
+    # --------------------------------------------------------------------------
+    - name: "[BREAK] Patch Flannel DaemonSet to bind to NAT interface (enp0s3)"
+      ansible.builtin.shell: >-
+        kubectl -n kube-flannel get ds kube-flannel-ds -o json |
+        sed 's/--iface=enp0s8/--iface=enp0s3/g' |
+        kubectl apply -f -
+      tags: [break]
+
+    - name: "[BREAK] Restart Flannel daemonset pods"
+      ansible.builtin.command: kubectl -n kube-flannel rollout restart ds kube-flannel-ds
+      tags: [break]
+
+    - name: "[BREAK] Wait for Flannel rollout"
+      ansible.builtin.command: kubectl -n kube-flannel rollout status ds kube-flannel-ds --timeout=60s
+      tags: [break]
+
+    - name: "[BREAK] Display diagnosis and symptoms"
+      ansible.builtin.debug:
+        msg:
+          - "======================================================================"
+          - "FLANNEL MISCONFIGURED TO enp0s3 (NAT INTERFACE)"
+          - "======================================================================"
+          - "Symptom 1: Every VM has the identical NAT IP address: 10.0.2.15."
+          - "Symptom 2: Flannel VXLAN overlay encapsulates cross-node packets with 10.0.2.15."
+          - "Symptom 3: Cross-node pod traffic is dropped (node1 cannot reach CoreDNS on master)."
+          - "Symptom 4: 'kubectl get nodes' STILL REPORTS READY! (Misleading health check)."
+          - "======================================================================"
+      tags: [break]
+
+    # --------------------------------------------------------------------------
+    # Restore Phase: Revert Flannel to private network interface (enp0s8)
+    # --------------------------------------------------------------------------
+    - name: "[RESTORE] Patch Flannel DaemonSet back to private network (enp0s8)"
+      ansible.builtin.shell: >-
+        kubectl -n kube-flannel get ds kube-flannel-ds -o json |
+        sed 's/--iface=enp0s3/--iface=enp0s8/g' |
+        kubectl apply -f -
+      tags: [restore]
+
+    - name: "[RESTORE] Restart Flannel daemonset pods"
+      ansible.builtin.command: kubectl -n kube-flannel rollout restart ds kube-flannel-ds
+      tags: [restore]
+
+    - name: "[RESTORE] Wait for Flannel rollout"
+      ansible.builtin.command: kubectl -n kube-flannel rollout status ds kube-flannel-ds --timeout=60s
+      tags: [restore]
+
+    - name: "[RESTORE] Display recovery status"
+      ansible.builtin.debug:
+        msg:
+          - "======================================================================"
+          - "FLANNEL RESTORED TO enp0s8 (PRIVATE NETWORK 192.168.56.x)"
+          - "======================================================================"
+          - "✓ Cross-node VXLAN traffic restored on reachable host-only network."
+          - "======================================================================"
+      tags: [restore]
