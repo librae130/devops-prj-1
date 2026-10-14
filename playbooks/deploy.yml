@@ -1,0 +1,108 @@
+---
+# ==============================================================================
+# Part 3: Deploy Google Online Boutique using Ansible & Helm
+# Reference: Section 7 of Project 1 Specification
+# ==============================================================================
+- name: Deploy Online Boutique Microservices Application
+  hosts: k8s-master
+  become: yes
+
+  vars_files:
+    - ../vars/microservices.yml
+
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+
+  tasks:
+    - name: Ensure git is installed on the control plane
+      ansible.builtin.apt:
+        name: git
+        state: present
+        update_cache: no
+
+    - name: Clone upstream Helm chart repository (pinned commit)
+      ansible.builtin.git:
+        repo: "{{ chart_repo }}"
+        dest: "{{ src }}"
+        version: "{{ chart_version }}"
+        force: no
+
+    - name: Ensure microservice namespace exists
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: Namespace
+        name: "{{ app_namespace }}"
+        state: present
+
+    # --------------------------------------------------------------------------
+    # Deploy all 11 microservices using Helm and the 3 overrides:
+    # 1. appReplicas: 1 (applied across all releases via common)
+    # 2. serviceType: NodePort (frontend override)
+    # 3. appName: checkoutservice (checkoutservice upstream bug fix)
+    # --------------------------------------------------------------------------
+    - name: Deploy Online Boutique releases via Helm
+      kubernetes.core.helm:
+        name: "{{ item.release }}"
+        chart_ref: "{{ src }}/{{ item.chart }}"
+        release_namespace: "{{ app_namespace }}"
+        create_namespace: false
+        values_files:
+          - "{{ src }}/{{ item.values_file }}"
+        values: "{{ common | combine(item.overrides | default({})) }}"
+        wait: yes
+        wait_timeout: 300s
+      loop: "{{ microservices }}"
+      loop_control:
+        label: "{{ item.release }} (chart: {{ item.chart }})"
+
+    - name: Wait for all microservice deployments to have available replicas
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ item.expected_deployment }}"
+        namespace: "{{ app_namespace }}"
+      register: deploy_check
+      until:
+        - deploy_check.resources is defined
+        - deploy_check.resources | length > 0
+        - deploy_check.resources[0].status.availableReplicas is defined
+        - deploy_check.resources[0].status.availableReplicas >= 1
+      retries: 30
+      delay: 5
+      loop: "{{ microservices }}"
+      loop_control:
+        label: "{{ item.expected_deployment }}"
+
+    - name: Retrieve frontend Service details
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Service
+        name: frontend
+        namespace: "{{ app_namespace }}"
+      register: frontend_service_info
+
+    - name: Assert frontend Service is created with NodePort
+      ansible.builtin.assert:
+        that:
+          - frontend_service_info.resources is defined
+          - frontend_service_info.resources | length > 0
+          - frontend_service_info.resources[0].spec.type == "NodePort"
+          - frontend_service_info.resources[0].spec.ports[0].nodePort is defined
+        fail_msg: "Frontend service was not configured as NodePort!"
+
+    - name: Display storefront URL
+      ansible.builtin.debug:
+        msg:
+          - "======================================================================"
+          - "ONLINE BOUTIQUE DEPLOYMENT SUCCESSFUL"
+          - "======================================================================"
+          - "Namespace:           {{ app_namespace }}"
+          - "Total Releases:       {{ microservices | length }}"
+          - "Frontend NodePort:    {{ frontend_service_info.resources[0].spec.ports[0].nodePort }}"
+          - ""
+          - "Storefront Access URL (via worker node):"
+          - "  http://192.168.56.11:{{ frontend_service_info.resources[0].spec.ports[0].nodePort }}/"
+          - ""
+          - "Storefront Access URL (via control plane):"
+          - "  http://192.168.56.10:{{ frontend_service_info.resources[0].spec.ports[0].nodePort }}/"
+          - "======================================================================"

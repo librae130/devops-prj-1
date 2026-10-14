@@ -1,0 +1,213 @@
+---
+# ==============================================================================
+# Part 4: Automated Verification Playbook
+# Reference: Section 8 of Project 1 Specification
+#
+# Asserts rather than assumes:
+# 1. Both nodes are Ready and registered on private network (192.168.56.x)
+# 2. All 11 Deployments have their replicas available
+# 3. checkoutservice exists under the correct name (not "servicename")
+# 4. frontend Service is a NodePort
+# 5. HTTP requests to the storefront return 200 with recognisable content
+#
+# Any failure halts the play immediately.
+# ==============================================================================
+- name: Verify Online Boutique Microservices Deployment
+  hosts: k8s-master
+  become: yes
+
+  vars_files:
+    - ../vars/microservices.yml
+
+  vars:
+    expected_deployments:
+      - redis-cart
+      - emailservice
+      - paymentservice
+      - shippingservice
+      - currencyservice
+      - productcatalogservice
+      - cartservice
+      - recommendationservice
+      - adservice
+      - checkoutservice
+      - frontend
+
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # Assertion 1: Cluster Nodes Status and Private Network Registration
+    # --------------------------------------------------------------------------
+    - name: "[Check 1/5] Retrieve cluster node information"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Node
+      register: cluster_nodes
+
+    - name: "[Check 1/5] Extract node status and InternalIPs"
+      ansible.builtin.set_fact:
+        node_ips: >-
+          {{
+            cluster_nodes.resources
+            | map(attribute='status.addresses')
+            | flatten
+            | selectattr('type', 'equalto', 'InternalIP')
+            | map(attribute='address')
+            | list
+          }}
+        all_nodes_ready: >-
+          {{
+            cluster_nodes.resources
+            | map(attribute='status.conditions')
+            | flatten
+            | selectattr('type', 'equalto', 'Ready')
+            | map(attribute='status')
+            | list
+          }}
+
+    - name: "[Check 1/5] Assert both nodes are Ready on private network 192.168.56.x"
+      ansible.builtin.assert:
+        that:
+          - cluster_nodes.resources | length == 2
+          - all_nodes_ready | length == 2
+          - all_nodes_ready | unique == ['True']
+          - "'192.168.56.10' in node_ips"
+          - "'192.168.56.11' in node_ips"
+        fail_msg: >-
+          Cluster nodes check failed! Verify that both nodes are Ready and their
+          InternalIPs are pinned to the private network (192.168.56.10 and 192.168.56.11).
+        success_msg: "Check 1 Passed: Both nodes are Ready on private network 192.168.56.x."
+
+    # --------------------------------------------------------------------------
+    # Assertion 2: All 11 Deployments Have Available Replicas
+    # --------------------------------------------------------------------------
+    # Assertion 2: All 11 Deployments Have Available Replicas
+    # --------------------------------------------------------------------------
+    - name: "[Check 2/5] Retrieve and assert all 11 Deployments are Available"
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: "{{ item }}"
+        namespace: "{{ app_namespace }}"
+      register: dep_check
+      failed_when: >-
+        dep_check.resources is not defined or
+        dep_check.resources | length == 0 or
+        (dep_check.resources[0].status.availableReplicas | default(0) | int < 1)
+      loop: "{{ expected_deployments }}"
+
+    # --------------------------------------------------------------------------
+    # Assertion 3: Bug Diagnosis Check (checkoutservice vs servicename)
+    # --------------------------------------------------------------------------
+    - name: "[Check 3/5] Assert bug fix: 'servicename' Deployment MUST NOT exist"
+      kubernetes.core.k8s_info:
+        api_version: apps/v1
+        kind: Deployment
+        name: servicename
+        namespace: "{{ app_namespace }}"
+      register: buggy_dep
+      failed_when: buggy_dep.resources | length > 0
+
+    - name: "[Check 3/5] Verify checkoutservice Service endpoint exists on port 5050"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Service
+        name: checkoutservice
+        namespace: "{{ app_namespace }}"
+      register: checkout_svc
+
+    - name: "[Check 3/5] Assert checkoutservice Service is present and exposing port 5050"
+      ansible.builtin.assert:
+        that:
+          - checkout_svc.resources is defined
+          - checkout_svc.resources | length > 0
+          - checkout_svc.resources[0].spec.ports[0].port == 5050
+        fail_msg: "Service checkoutservice does not exist or does not expose port 5050!"
+        success_msg: "Check 3 Passed: checkoutservice Service exists and exposes port 5050."
+
+    # --------------------------------------------------------------------------
+    # Assertion 4: Frontend Service is a NodePort
+    # --------------------------------------------------------------------------
+    - name: "[Check 4/5] Retrieve frontend Service details"
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Service
+        name: frontend
+        namespace: "{{ app_namespace }}"
+      register: frontend_svc
+
+    - name: "[Check 4/5] Assert frontend Service is NodePort with valid port"
+      ansible.builtin.assert:
+        that:
+          - frontend_svc.resources is defined
+          - frontend_svc.resources | length > 0
+          - frontend_svc.resources[0].spec.type == "NodePort"
+          - frontend_svc.resources[0].spec.ports[0].nodePort is defined
+          - frontend_svc.resources[0].spec.ports[0].nodePort | int >= 30000
+          - frontend_svc.resources[0].spec.ports[0].nodePort | int <= 32767
+        fail_msg: "Frontend Service is not configured as NodePort! Check serviceType override."
+        success_msg: >-
+          Check 4 Passed: frontend Service is NodePort on port
+          {{ frontend_svc.resources[0].spec.ports[0].nodePort }}.
+
+    - name: "[Check 4/5] Set fact for frontend NodePort"
+      ansible.builtin.set_fact:
+        frontend_nodeport: "{{ frontend_svc.resources[0].spec.ports[0].nodePort }}"
+
+    # --------------------------------------------------------------------------
+    # Assertion 5: HTTP Storefront Returns HTTP 200 with Recognisable Content
+    # --------------------------------------------------------------------------
+    - name: "[Check 5/5] HTTP GET storefront via worker node (node1: 192.168.56.11)"
+      ansible.builtin.uri:
+        url: "http://192.168.56.11:{{ frontend_nodeport }}/"
+        method: GET
+        return_content: yes
+        status_code: 200
+        timeout: 15
+      register: storefront_worker_response
+
+    - name: "[Check 5/5] Assert worker storefront response contains recognisable content"
+      ansible.builtin.assert:
+        that:
+          - storefront_worker_response.status == 200
+          - "'Online Boutique' in storefront_worker_response.content"
+        fail_msg: "Storefront on worker node returned unexpected status or content!"
+        success_msg: "Check 5 Passed: Storefront reachable via worker node (HTTP 200, 'Online Boutique' found)."
+
+    - name: "[Check 5/5] HTTP GET storefront via control plane (master: 192.168.56.10)"
+      ansible.builtin.uri:
+        url: "http://192.168.56.10:{{ frontend_nodeport }}/"
+        method: GET
+        return_content: yes
+        status_code: 200
+        timeout: 15
+      register: storefront_master_response
+
+    - name: "[Check 5/5] Assert master storefront response contains recognisable content"
+      ansible.builtin.assert:
+        that:
+          - storefront_master_response.status == 200
+          - "'Online Boutique' in storefront_master_response.content"
+        fail_msg: "Storefront on master node returned unexpected status or content!"
+        success_msg: "Check 5 Passed: Storefront reachable via master node (HTTP 200, 'Online Boutique' found)."
+
+    # --------------------------------------------------------------------------
+    # Final Summary Banner
+    # --------------------------------------------------------------------------
+    - name: Verification Summary
+      ansible.builtin.debug:
+        msg:
+          - "======================================================================"
+          - "ALL VERIFICATION CHECKS PASSED SUCCESSFULLY (5/5)"
+          - "======================================================================"
+          - "✓ Check 1: Nodes (master, node1) are Ready on private network (192.168.56.x)"
+          - "✓ Check 2: All 11 Deployments are Available (replicas == 1)"
+          - "✓ Check 3: checkoutservice is correctly named (upstream bug fixed)"
+          - "✓ Check 4: frontend is exposed via NodePort ({{ frontend_nodeport }})"
+          - "✓ Check 5: Storefront returns HTTP 200 with 'Online Boutique' content"
+          - ""
+          - "You can now test the storefront in your browser:"
+          - "  http://192.168.56.11:{{ frontend_nodeport }}/"
+          - "======================================================================"

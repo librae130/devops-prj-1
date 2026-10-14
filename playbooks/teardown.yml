@@ -1,0 +1,58 @@
+---
+# ==============================================================================
+# Part 5: Teardown Playbook (App only, cluster stays)
+# Reference: Section 9 of Project 1 Specification
+# ==============================================================================
+- name: Teardown Online Boutique Microservices Application
+  hosts: k8s-master
+  become: yes
+
+  vars_files:
+    - ../vars/microservices.yml
+
+  environment:
+    KUBECONFIG: /etc/kubernetes/admin.conf
+
+  tasks:
+    # --------------------------------------------------------------------------
+    # 1. Uninstall all 11 Helm releases in reverse order (frontend first, redis last)
+    # --------------------------------------------------------------------------
+    - name: Uninstall Online Boutique releases via Helm
+      kubernetes.core.helm:
+        name: "{{ item.release }}"
+        release_namespace: "{{ app_namespace }}"
+        state: absent
+        wait: yes
+      loop: "{{ microservices | reverse | list }}"
+      loop_control:
+        label: "{{ item.release }}"
+
+    # --------------------------------------------------------------------------
+    # 2. Remove the microservice namespace
+    # --------------------------------------------------------------------------
+    - name: Remove microservice namespace
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: Namespace
+        name: "{{ app_namespace }}"
+        state: absent
+        wait: yes
+
+    # --------------------------------------------------------------------------
+    # 3. Summary banner
+    # --------------------------------------------------------------------------
+    - name: Teardown summary
+      ansible.builtin.debug:
+        msg:
+          - "======================================================================"
+          - "TEARDOWN COMPLETED SUCCESSFULLY (PART 5)"
+          - "======================================================================"
+          - "✓ All 11 microservice Helm releases have been uninstalled."
+          - "✓ Namespace '{{ app_namespace }}' has been deleted."
+          - "✓ The underlying Kubernetes cluster (master, node1) remains RUNNING."
+          - ""
+          - "Next steps:"
+          - "  - To redeploy app:  ansible-playbook -i inventory.ini playbooks/deploy.yml"
+          - "  - To stop VMs:      vagrant halt"
+          - "  - To destroy VMs:   vagrant destroy -f"
+          - "======================================================================"

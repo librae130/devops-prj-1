@@ -1,0 +1,120 @@
+---
+# ==============================================================================
+# Online Boutique Microservices Deployment Configuration
+# Reference: Section 7 of Project 1 Specification
+# ==============================================================================
+
+# Target Kubernetes namespace
+app_namespace: microservice
+namespace: "{{ app_namespace }}"
+
+# Upstream Helm chart repository
+chart_repo: "https://github.com/iankisali/microservice-deployment"
+
+# Pinned commit SHA for deterministic, idempotent deployments (Rubric Area 7)
+chart_version: "8ed96c8d98625c73b67c7172b6703383ea9e46e9"
+
+# Directory on the control plane where upstream charts are cloned
+src: "/opt/microservice-deployment"
+
+# ------------------------------------------------------------------------------
+# Override 1 (Applies to ALL releases):
+# Upstream values files request 2 replicas per service (>20 pods total).
+# A single 4GB RAM worker node cannot schedule that volume of pods.
+# Setting appReplicas: 1 keeps all 11 microservices running without OOM.
+# ------------------------------------------------------------------------------
+common:
+  appReplicas: 1
+
+# ------------------------------------------------------------------------------
+# The 11 microservice releases
+# Deployed in dependency order: datastore & backends first, frontend last.
+# ------------------------------------------------------------------------------
+microservices:
+  # 1. Redis Cart (shopping cart persistent cache)
+  # Uses generic chart/redis instead of chart/microservice
+  - release: rediscart
+    chart: chart/redis
+    values_file: values/redis-values.yaml
+    expected_deployment: redis-cart
+
+  # 2. Email Service (order confirmation emails)
+  - release: emailservice
+    chart: chart/microservice
+    values_file: values/email-service-values.yaml
+    expected_deployment: emailservice
+
+  # 3. Payment Service (credit card processing)
+  - release: paymentservice
+    chart: chart/microservice
+    values_file: values/payment-service-values.yaml
+    expected_deployment: paymentservice
+
+  # 4. Shipping Service (shipping cost calculation & tracking)
+  - release: shippingservice
+    chart: chart/microservice
+    values_file: values/shipping-service-values.yaml
+    expected_deployment: shippingservice
+
+  # 5. Currency Service (currency exchange rates & conversions)
+  - release: currencyservice
+    chart: chart/microservice
+    values_file: values/currency-service-values.yaml
+    expected_deployment: currencyservice
+
+  # 6. Product Catalog Service (product listing & search)
+  - release: productcatalogservice
+    chart: chart/microservice
+    values_file: values/productcatalog-service-values.yaml
+    expected_deployment: productcatalogservice
+
+  # 7. Cart Service (cart management via Redis)
+  - release: cartservice
+    chart: chart/microservice
+    values_file: values/cart-service-values.yaml
+    expected_deployment: cartservice
+
+  # 8. Recommendation Service (product recommendations)
+  - release: recommendationservice
+    chart: chart/microservice
+    values_file: values/recommendation-service-values.yaml
+    expected_deployment: recommendationservice
+
+  # 9. Ad Service (contextual advertisement display)
+  - release: adservice
+    chart: chart/microservice
+    values_file: values/ad-service-values.yaml
+    expected_deployment: adservice
+
+  # 10. Checkout Service
+  # ----------------------------------------------------------------------------
+  # Override 3 (Upstream Bug Fix):
+  # In upstream values/checkout-service-values.yaml, lines 1-2 duplicate 'appImage':
+  #   appImage: checkoutservice
+  #   appImage: gcr.io/google-samples/microservices-demo/checkoutservice
+  # Because the key is duplicated, the second line overwrites and 'appName' is never set.
+  # The chart falls back to its default literal string "servicename".
+  # Frontend points to CHECKOUT_SERVICE_ADDR = checkoutservice:5050, which fails to resolve.
+  # By overriding appName: checkoutservice, the Deployment and Service get the right name.
+  # ----------------------------------------------------------------------------
+  - release: checkoutservice
+    chart: chart/microservice
+    values_file: values/checkout-service-values.yaml
+    expected_deployment: checkoutservice
+    overrides:
+      appName: checkoutservice
+
+  # 11. Frontend Service
+  # ----------------------------------------------------------------------------
+  # Override 2:
+  # Upstream requests serviceType: LoadBalancer.
+  # On bare-metal kubeadm (Vagrant), no cloud provider exists to assign an external IP.
+  # A LoadBalancer service would stay in <pending> forever and the storefront would be unreachable.
+  # Overriding serviceType: NodePort exposes the frontend on a high port (30000-32767).
+  # ----------------------------------------------------------------------------
+  - release: frontendservice
+    chart: chart/microservice
+    values_file: values/frontend-values.yaml
+    expected_deployment: frontend
+    overrides:
+      serviceType: NodePort

@@ -1,0 +1,5 @@
+# Enforce LF for shell scripts to avoid Windows CRLF errors in Linux VMs
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.ini text eol=lf

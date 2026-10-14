@@ -114,37 +114,99 @@ kubectl get pods -A
 
 If the kube config is already set, this should work from the control VM. The cluster config is set up for the `vagrant` user on the master VM and shared by the playbook logic.
 
-## Useful commands
+## 6) Deploy Online Boutique (Part 3)
 
-From your host machine:
+Deploy the 11 Online Boutique microservices using Helm and Ansible:
 
 ```bash
-vagrant status
+ansible-playbook -i inventory.ini playbooks/deploy.yml
+```
+
+This applies three essential overrides without modifying upstream chart code:
+1. `common.appReplicas: 1` (low-resource environment).
+2. `frontendservice.overrides.serviceType: NodePort` (assigns accessible port on 192.168.56.11).
+3. `checkoutservice.overrides.appName: checkoutservice` (fixes upstream duplicated key bug falling back to "servicename").
+
+## 7) Automated Verification (Part 4)
+
+Run automated assertions to verify cluster and application health:
+
+```bash
+ansible-playbook -i inventory.ini playbooks/verify.yml
+```
+
+This verifies:
+- Both nodes are `Ready` on the private network (`192.168.56.x`).
+- All 11 Deployments report available replicas.
+- `checkoutservice` exists with the correct name (no `servicename`).
+- Frontend service is `NodePort`.
+- HTTP 200 storefront check returns `Online Boutique`.
+
+Access the web store in your host browser at:
+`http://192.168.56.11:<nodePort>/`
+
+## 8) Master Playbook & Idempotency (Appendix C)
+
+To provision the entire cluster and deploy the application in a single run:
+
+```bash
+ansible-playbook -i inventory.ini site.yml
+```
+
+To test idempotency (should result in `changed=0` on subsequent runs):
+
+```bash
+ansible-playbook -i inventory.ini site.yml
+```
+
+## 9) Teardown Application (Part 5)
+
+To remove all 11 microservice Helm releases and the `microservice` namespace while keeping the Kubernetes cluster running:
+
+```bash
+ansible-playbook -i inventory.ini playbooks/teardown.yml
+```
+
+To stop VMs:
+```bash
 vagrant halt
-vagrant destroy
 ```
 
-From the control VM:
-
+To completely delete the environment:
 ```bash
-cd /vagrant
-ansible -i inventory.ini k8s -m ping
-ansible-playbook -i inventory.ini playbooks/cluster.yml
-kubectl get nodes
+vagrant destroy -f
 ```
+
+## Snapshots for Live Demo
+
+Milestones are captured as Vagrant snapshots:
+- `01-cluster-ready`: Kubernetes cluster healthy, 0 microservices.
+- `02-app-complete`: All 11 microservices running and verified.
+
+Restore commands:
+```powershell
+vagrant snapshot restore master 02-app-complete
+vagrant snapshot restore node1 02-app-complete
+vagrant snapshot restore control 02-app-complete
+```
+Convenience Windows batch scripts are provided in the parent folder:
+- `1_bat_may.bat`: Power on VMs (`vagrant up`)
+- `2_tat_may.bat`: Safely power off VMs (`vagrant halt`)
+- `3_khoi_phuc_demo.bat`: Restore snapshot `02-app-complete` and launch browser
 
 ## Project files
 
-- `Vagrantfile`: defines the `control`, `master`, and `node1` VMs
-- `setup.sh`: intended for the control VM only
-- `inventory.ini`: Ansible inventory for the cluster
-- `playbooks/cluster.yml`: cluster provisioning playbook
-- `vars/main.yml`: variables used by the playbook
-- `requirements.yml`: Ansible role and collection requirements
+- `Vagrantfile`: defines `control`, `master`, and `node1` VMs
+- `setup.sh`: bootstrap script for `control` VM
+- `inventory.ini`: Ansible inventory for cluster nodes
+- `site.yml`: master playbook (imports `cluster.yml` then `deploy.yml`)
+- `playbooks/cluster.yml`: cluster provisioning playbook (Part 2)
+- `playbooks/deploy.yml`: Helm microservice deployment playbook (Part 3)
+- `playbooks/verify.yml`: automated verification assertion playbook (Part 4)
+- `playbooks/teardown.yml`: application teardown playbook (Part 5)
+- `vars/main.yml`: cluster variables (Flannel, kubelet, versions)
+- `vars/microservices.yml`: Helm release configuration & values overrides
+- `requirements.yml`: required Ansible roles and collections
+- `recap.txt`: playbook execution logs for first run and idempotency tests
+- `screenshots/`: verified application flow evidence screenshots
 
-## Notes
-
-- The script in `setup.sh` is not meant to run on your laptop or on the cluster nodes directly.
-- It is meant to run from inside the `control` VM.
-- `vagrant up` will trigger the bootstrap automatically for the control VM.
-- If you rebuild the VMs or destroy them, the script will run again and the SSH keys will be refreshed automatically.

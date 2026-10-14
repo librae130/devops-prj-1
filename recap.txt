@@ -1,0 +1,8 @@
+================================================================================
+PLAY RECAP: First Successful Cluster Provisioning (Part 2)
+Timestamp: 2026-10-12
+Playbook: playbooks/cluster.yml
+================================================================================
+master                     : ok=58   changed=30   unreachable=0    failed=0    skipped=13   rescued=0    ignored=0   
+node1                      : ok=40   changed=20   unreachable=0    failed=0    skipped=9    rescued=0    ignored=0   
+================================================================================
