@@ -211,13 +211,15 @@ microservices:
       readinessProbe:
         grpc:
           port: 7070
-        initialDelaySeconds: 5
-        periodSeconds: 5
+        initialDelaySeconds: 15
+        periodSeconds: 10
+        timeoutSeconds: 5
       livenessProbe:
         grpc:
           port: 7070
-        initialDelaySeconds: 10
+        initialDelaySeconds: 20
         periodSeconds: 10
+        timeoutSeconds: 5
       pdb:
         enabled: true
         minAvailable: 1
@@ -256,23 +258,26 @@ microservices:
     values_file: values/ad-service-values.yaml
     expected_deployment: adservice
     overrides:
+      appVersion: "v0.3.5"
       resources:
         requests:
           cpu: "30m"
           memory: "150Mi"
         limits:
-          cpu: "200m"
-          memory: "300Mi"
+          cpu: "300m"
+          memory: "500Mi"
       readinessProbe:
         grpc:
           port: 9555
-        initialDelaySeconds: 15
+        initialDelaySeconds: 25
         periodSeconds: 10
+        timeoutSeconds: 5
       livenessProbe:
         grpc:
           port: 9555
-        initialDelaySeconds: 20
+        initialDelaySeconds: 30
         periodSeconds: 10
+        timeoutSeconds: 5
 
   # ----------------------------------------------------------------------------
   # 10. Checkout Service

@@ -1,7 +1,7 @@
 Vagrant.configure("2") do |config|
   config.vm.box = "ubuntu/jammy64"
   config.vm.box_check_update = false
-  config.vm.boot_timeout = 600
+  config.vm.boot_timeout = 900
 
   boxes = [
     { name: "master",  ip: "192.168.56.10", mem: 2048 },
@@ -19,6 +19,23 @@ Vagrant.configure("2") do |config|
         v.memory = b[:mem]
         v.cpus   = 2
       end
+
+      m.vm.provision "shell", inline: <<-SHELL
+        hostnamectl set-hostname #{b[:name]}
+        mkdir -p /etc/netplan
+        cat << 'EOF' > /etc/netplan/50-vagrant.yaml
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    enp0s8:
+      addresses:
+      - #{b[:ip]}/24
+EOF
+        chmod 600 /etc/netplan/50-vagrant.yaml
+        netplan apply 2>/dev/null || true
+        iptables -P FORWARD ACCEPT 2>/dev/null || true
+      SHELL
 
       if b[:name] == "control"
         m.vm.provision "shell",

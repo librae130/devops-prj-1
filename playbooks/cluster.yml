@@ -41,6 +41,12 @@
         - net.ipv4.ip_forward
         - net.bridge.bridge-nf-call-iptables
 
+    - name: Ensure iptables forward policy is ACCEPT
+      ansible.builtin.iptables:
+        chain: FORWARD
+        policy: ACCEPT
+
+
     - name: Download Flannel manifest
       ansible.builtin.get_url:
         url: https://github.com/flannel-io/flannel/releases/download/v0.26.1/kube-flannel.yml
